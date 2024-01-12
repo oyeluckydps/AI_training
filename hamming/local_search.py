@@ -82,7 +82,7 @@ def replace_points(mat, points):
     """
     new_mat = copy.deepcopy(mat)
     for row in points:
-        new_mat[row] = np.random.randint(2, size=(1, 7))
+        new_mat[row] = np.random.randint(2, size=(1, np.shape(new_mat)[1]))
     return new_mat
 
 
@@ -111,7 +111,7 @@ def descent_points(mat, points, cost_fun):
         idx = combo[1]
         new_mat[row][idx] = (new_mat[row][idx] + 1) % 2
         current_cost = cost_fun(new_mat)
-        if current_cost>base_cost:
+        if current_cost<base_cost:
             return (new_mat, current_cost)
     return (mat, base_cost)
 
@@ -123,7 +123,7 @@ def gradient_descent(mat, cost_fun):
     :param cost_fun: The cost function that has to be minimized.
     :return: The optimized mat and optimized cost function.
     """
-    ITERATIONS = 100
+    ITERATIONS = 50
     for i in range(ITERATIONS):
         logging.debug(i)
         base_cost = cost_fun(mat)
@@ -141,7 +141,12 @@ def gradient_descent(mat, cost_fun):
 
         # new_mat = replace_points(mat, problem_points)       # An algorithm to replace all the points that are creating problem as they are nearby.
         new_mat, new_cost = descent_points(mat, problem_points, cost_fun)
-        if new_cost <= base_cost:
+        if new_cost < base_cost:
+            mat = new_mat
+        else:
+            new_mat = replace_points(mat, problem_points)
+            new_cost = cost_fun(new_mat)
+        if new_cost < base_cost:
             mat = new_mat
         logging.debug(new_cost)
     return mat, cost_fun(mat)
@@ -155,7 +160,7 @@ def main():
         d   --> Dimensions of the hypercube.
         cost_fun    --> Reference to the cost function pertaining to 1st or 2nd challenge.
     """
-    n = 16
+    n = 11
     d = 7
     cost_fun = combined_distance
 
