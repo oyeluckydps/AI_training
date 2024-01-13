@@ -11,8 +11,9 @@ import logging
 
 logging.basicConfig(level=logging.DEBUG)
 
-random_seed = 10
+random_seed = 42
 random.seed(random_seed)
+np.random.seed(random_seed)
 print("Initiated with random seed = ", random_seed)
 
 
@@ -160,7 +161,7 @@ def main():
         d   --> Dimensions of the hypercube.
         cost_fun    --> Reference to the cost function pertaining to 1st or 2nd challenge.
     """
-    n = 11
+    n = 16
     d = 7
     cost_fun = combined_distance
 
