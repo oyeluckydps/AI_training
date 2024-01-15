@@ -31,6 +31,7 @@ import numpy as np
 import logging
 import time
 from itertools import product
+from queue import PriorityQueue
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -297,9 +298,9 @@ class CSP:
         self.all_constraints['point2'] = Constraint(Constraint.equal, 1, self.all_vars[1],
                                                     tuple([0]*(self.d-self.t)+[1]*self.t))
         self.constraint_eqn_for_var[1].append('point2')
-        self.all_constraints['point3'] = Constraint(Constraint.equal, 1, self.all_vars[2],
-                                                    tuple([1]*self.t+[0]*(self.d-self.t)))
-        self.constraint_eqn_for_var[2].append('point3')
+        # self.all_constraints['point3'] = Constraint(Constraint.equal, 1, self.all_vars[2],
+        #                                             tuple([1]*self.t+[0]*(self.d-self.t)))
+        # self.constraint_eqn_for_var[2].append('point3')
 
     def arc_consistency(self):
         """
@@ -307,29 +308,33 @@ class CSP:
         consistent i.e. not removable.
         :return: True if arc consistency is maintained. False if domain of a variable is reduced to [].
         """
-        constraints_to_check = list(self.all_constraints.keys())    # A list of all constraint to be checked.
-        while len(constraints_to_check) > 0:
-            logging.debug(len(constraints_to_check))
+        ITERATIONS = 0
+        FACTOR = 0.8        # The decay factor for the priorities in each loop.
+        PRIORITY_VAL = 1    # The added value for the priorities in each loop.
+        all_constraints = list(self.all_constraints.keys())                # A list of all constraint to be checked.
+        constraints_priority = [PRIORITY_VAL*FACTOR]*(len(all_constraints)-2) + [PRIORITY_VAL]*2
+        while any(constraints_priority):
+            ITERATIONS += 1
+            logging.debug(ITERATIONS)
+            logging.debug(len([priority>0 for priority in constraints_priority]))
             logging.debug([len(domain) for domain in self.all_vars])
-            current_constraint_key = constraints_to_check[-1]
+            current_constraint_idx = constraints_priority.index(max(constraints_priority))
+            current_constraint_key = all_constraints[current_constraint_idx]
             constraint = self.all_constraints[current_constraint_key]
             reduction = constraint.reduce_domain()      # Reduce a constraint.
             logging.debug(current_constraint_key)
+            constraints_priority[current_constraint_idx] = 0
+            constraints_priority = [priority*FACTOR for priority in constraints_priority]
             for var, reduced_vals in zip(constraint.vars, reduction):
                 if len(reduced_vals) > 0:               # If any of the variables involved in this constraint is reduced
                     var_idx = self.all_vars.index(var)
-                    for related_constraint in self.constraint_eqn_for_var[var_idx]:     # Then all the constraint eqns
-                        # that the variable is involved in, into the constraints_to_check list if it doesn't already
-                        # exist in it. If it exist then add it to the end so that it is checked first.
-                        try:
-                            constraints_to_check.remove(related_constraint)
-                        except ValueError:
-                            constraints_to_check.append(related_constraint)
-                        else:
-                            constraints_to_check.append(related_constraint)
+                    for related_constraint in self.constraint_eqn_for_var[var_idx]:     # Added PRIORITY_VAL to the
+                        # Priority List for the constraint equation having an affected variable.
+                        constraint_idx = all_constraints.index(related_constraint)
+                        constraints_priority[constraint_idx] += PRIORITY_VAL
                     pass
             pass
-            constraints_to_check.remove(current_constraint_key)
+            constraints_priority[current_constraint_idx] = 0
 
 
 def main():
