@@ -266,8 +266,10 @@ class CSP:
         domain = list(range(2**d))                                      # Domain for each variable
         self.all_vars = [Variable(d, domain) for _ in range(n)]         # List of all Variables by initializing.
         self.all_vars[0].assign_value(0)
-        self.all_vars[1].assign_value(7)
-        self.all_vars[2].assign_value(7<<4)
+        self.all_vars[1].assign_value(70)
+        self.all_vars[2].assign_value(39)
+        self.all_vars[3].assign_value(97)
+        self.all_vars[4].assign_value(21)
         self.ASSIGNED           # Set to true if the CSP has been resolved. It may be consistent or inconsistent.
         self.CONSISTENT         # Set to true if it is consistent, False if not, and None if not assigned.
         self.all_constraints = dict()                       # Dict to contain all the constraint equations.
@@ -298,9 +300,9 @@ class CSP:
             print("The CSP leads to INCONSISTENCY!")
             print(inconsistencies)
             return
+        if self.CONSISTENT is True:
+            print("The CSP is CONSISTENT!")
         for var in self.all_vars:
-            if self.CONSISTENT is True:
-                print("The CSP is CONSISTENT!")
             print("The variable " + str(var), end="")
             if var.assigned:
                 print("is assigned to single value: " + str(var.domain[0]))
@@ -329,6 +331,17 @@ class CSP:
         :return: -(Sm of number of elements remaining in domain of variables).
         """
         return sum([len(var) for var in self.all_vars])
+
+    def MH_distance(self, fixed_points, val):
+        """
+        :param fixed_points: A list of points from which the distance of val is to be found.
+        :param val: Another point
+        :return: Sum of Manhattan Distance of val point from all the fixed poitns.
+        """
+        MH_distance = [sum([i^j for i, j in zip(row1, row2)]) \
+                           for idx1, row1 in enumerate(fixed_points) \
+                           for idx2, row2 in enumerate(fixed_points[idx1+1:])]
+        return sum(MH_distance)
 
     def arc_consistency(self):
         """
@@ -389,9 +402,7 @@ class CSP:
                     variables_to_check.append(var)
         if len(variables_to_check) < 1:
             return None
-        elements_in_domain = []
-        for var in variables_to_check:
-            elements_in_domain.append(len(var.domain))
+        elements_in_domain = [len(var.domain) for var in variables_to_check]
         min_elements_idx = elements_in_domain.index(min(elements_in_domain))
         return variables_to_check[min_elements_idx]
 
@@ -403,7 +414,7 @@ class CSP:
         :param variable:
         :return:
         """
-        IMPLEMENTATION = 'RANDOM'        # ARC_CONSISTENCY or RANDOM
+        IMPLEMENTATION = 'RANDOM'        # ARC_CONSISTENCY, RANDOM, or HEURISTIC
         if variable is None:
             variable = self.find_best_variable()
             if variable is None:
@@ -416,6 +427,20 @@ class CSP:
             for val in variable.next_val():
                 copy_for_ac = self.variable_assignment(variable, val)
                 ac_measure = copy_for_ac.arc_consistency()
+                if ac_measure > best_measure_so_far:
+                    best_measure_so_far = ac_measure
+                    best_step_so_far = copy_for_ac
+                    best_val_so_far = val
+            return variable, best_val_so_far, best_step_so_far
+
+        if IMPLEMENTATION == 'HEURISTIC':
+            fixed_points = [var.domain[0] for var in self.all_vars if var.assigned]
+            best_measure_so_far = float('-inf')
+            best_step_so_far = None
+            best_val_so_far = None
+            for val in variable.next_val():
+                copy_for_ac = self.variable_assignment(variable, val)
+                ac_measure = copy_for_ac.MH_distance(fixed_points, val)
                 if ac_measure > best_measure_so_far:
                     best_measure_so_far = ac_measure
                     best_step_so_far = copy_for_ac
