@@ -43,29 +43,31 @@ class Variable:
     """
     This class handles all the function sand state of a single variable.
     """
+    d = None
 
-    def __init__(self, d, domain=None):
+    def __init__(self, domain=None):
         """
         :param d: Dimensions of the Variable
         :param domain: Initial domain. If not provided, use range(2**d) as the domain.
         """
-        self.d = d
-        self.__domain = copy.deepcopy(domain) if domain is not None else list(range(2**d))
+        self.__domain = copy.deepcopy(domain) if domain is not None else list(range(2**Variable.d))
         self._enum_domain = []
         self.reset()
 
-    def tup_to_dec(self, bool_list):
+    @classmethod
+    def tup_to_dec(cls, bool_list):
         """
         Convert a list of boolean into its equivalent decimal integer.
         """
-        powered = [elem*2**(self.d-idx-1) for idx, elem in enumerate(bool_list)]
+        powered = [elem*2**(cls.d-idx-1) for idx, elem in enumerate(bool_list)]
         return sum(powered)
 
-    def dec_to_tup(self, val):
+    @classmethod
+    def dec_to_tup(cls, val):
         """
         Convert a decimal number into its equivalent list of booleans.
         """
-        return tuple([(val >> (i-1)) % 2 for i in range(self.d, 0, -1)])
+        return tuple([(val >> (i-1)) % 2 for i in range(cls.d, 0, -1)])
 
     def reset(self, expand_domain=False):
         """
@@ -73,7 +75,7 @@ class Variable:
         """
         self._enum_domain = []
         if expand_domain:
-            self.__domain = list(range(2**self.d))
+            self.__domain = list(range(2**Variable.d))
         for val in self.__domain:
             self.add_to_domain(val)
 
@@ -264,12 +266,11 @@ class CSP:
         self.d = d
         self.t = t
         domain = list(range(2**d))                                      # Domain for each variable
-        self.all_vars = [Variable(d, domain) for _ in range(n)]         # List of all Variables by initializing.
+        self.all_vars = [Variable(domain) for _ in range(n)]         # List of all Variables by initializing.
         self.all_vars[0].assign_value(0)
         self.all_vars[1].assign_value(70)
         self.all_vars[2].assign_value(39)
         self.all_vars[3].assign_value(97)
-        self.all_vars[4].assign_value(21)
         self.ASSIGNED           # Set to true if the CSP has been resolved. It may be consistent or inconsistent.
         self.CONSISTENT         # Set to true if it is consistent, False if not, and None if not assigned.
         self.all_constraints = dict()                       # Dict to contain all the constraint equations.
@@ -305,9 +306,9 @@ class CSP:
         for var in self.all_vars:
             print("The variable " + str(var), end="")
             if var.assigned:
-                print("is assigned to single value: " + str(var.domain[0]))
+                print("is assigned to single value: " + str(Variable.tup_to_dec(var.domain[0])))
             else:
-                print("has " + str(len(var)) + " values that are:" + str(var.domain))
+                print("has " + str(len(var)) + " values that are:" + str([Variable.tup_to_dec(val) for val in var.domain]))
         print()
         print("There are total of " + str(len(list(self.all_constraints.keys()))) + " consistency equations.")
 
@@ -414,43 +415,40 @@ class CSP:
         :param variable:
         :return:
         """
-        IMPLEMENTATION = 'RANDOM'        # ARC_CONSISTENCY, RANDOM, or HEURISTIC
+        IMPLEMENTATION = 'HEURISTIC'        # ARC_CONSISTENCY, RANDOM, or HEURISTIC
         if variable is None:
             variable = self.find_best_variable()
             if variable is None:
                 return None, None, None
 
         if IMPLEMENTATION == 'ARC_CONSISTENCY':
-            best_measure_so_far = float('-inf')
-            best_step_so_far = None
-            best_val_so_far = None
+            all_measures = []
+            all_steps = []
             for val in variable.next_val():
                 copy_for_ac = self.variable_assignment(variable, val)
                 ac_measure = copy_for_ac.arc_consistency()
-                if ac_measure > best_measure_so_far:
-                    best_measure_so_far = ac_measure
-                    best_step_so_far = copy_for_ac
-                    best_val_so_far = val
-            return variable, best_val_so_far, best_step_so_far
+                all_measures.append(ac_measure)
+                all_steps.append(copy_for_ac)
+            for measure, value, step in zip(*sorted(zip(all_measures, variable.domain, all_steps), reverse=True)):
+                yield variable, value, step
 
         if IMPLEMENTATION == 'HEURISTIC':
             fixed_points = [var.domain[0] for var in self.all_vars if var.assigned]
-            best_measure_so_far = float('-inf')
-            best_step_so_far = None
-            best_val_so_far = None
+            all_measures = []
+            all_steps = []
             for val in variable.next_val():
-                copy_for_ac = self.variable_assignment(variable, val)
-                ac_measure = copy_for_ac.MH_distance(fixed_points, val)
-                if ac_measure > best_measure_so_far:
-                    best_measure_so_far = ac_measure
-                    best_step_so_far = copy_for_ac
-                    best_val_so_far = val
-            return variable, best_val_so_far, best_step_so_far
+                copy_for_heuristic = self.variable_assignment(variable, val)
+                heuristic_measure = copy_for_heuristic.MH_distance(fixed_points, val)
+                all_measures.append(heuristic_measure)
+                all_steps.append(copy_for_heuristic)
+            for measure, value, step in sorted(zip(all_measures, variable.domain, all_steps), reverse=True):
+                yield variable, value, step
 
-        if IMPLEMENTATION == 'RANDOM':
-            random_value = random.choice(variable.domain)
-            copy_post_assignment = self.variable_assignment(variable, random_value)
-            return variable, random_value, copy_post_assignment
+        ### To be corrected.
+        # if IMPLEMENTATION == 'RANDOM':
+        #     random_value = random.choice(variable.domain)
+        #     copy_post_assignment = self.variable_assignment(variable, random_value)
+        #     return variable, random_value, copy_post_assignment
 
     def variable_assignment(self, variable, value):
         """
@@ -473,17 +471,18 @@ class CSP:
         :return: self with values assigned and CONSISTENT flag set to True if the problem is solved,
         else with CONSISTENT flag set to False.
         """
-        self.arc_consistency()      # Check the arc consistency
         if self.ASSIGNED:           # If the variables are assigned, be it consistent or inconsistent, then return.
+            return
+        self.arc_consistency()      # Check the arc consistency
+        if self.ASSIGNED:
             return
         best_var = self.find_best_variable()        # If values are not assigned then it is always possible to find a
                                                     # best variable for this level.
         ITERATION = 0
-        while len(best_var) > 0:
-            ITERATION += 1
-            _, best_val, resulting_CSP = self.find_best_value(variable=best_var)
+        for _, best_val, resulting_CSP in self.find_best_value(variable=best_var):
             # Best value and the resulting CSP (another copy) in which the best variable (over which we are
             # iterating) is assigned the best value from its domain found by the algorithm.
+            ITERATION += 1
             if tree_so_far is None:
                 tree_so_far = []
             tree_so_far.append(ITERATION)
@@ -494,9 +493,8 @@ class CSP:
             if resulting_CSP.CONSISTENT:        # CONSISTENT would either be True or False now.
                 self.all_vars = resulting_CSP.all_vars
                 return
-            else:       # resulting must be False
-                best_var.remove_from_domain(best_val)       # If this value was not able to find a CONSISTENT solution
-                                                            # Then remove it from the domain.
+        best_var.assign_domain([])      # Make the domain of best var (that will be reflected in self) empty to signify
+                                        # failure resulting to inconsistency.
         return      # If the domain of the variable has been reduced to [].
 
 
@@ -515,6 +513,7 @@ def main():
     d = 7
     t = 3
     Constraint.t = t
+    Variable.d = d
     csp1 = CSP(n, d, t)
     # print(list(csp1.all_constraints['point1'].satisfied_through()))
     # csp1.all_constraints['point2'].reduce_domain()
