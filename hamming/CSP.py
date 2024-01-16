@@ -29,9 +29,7 @@ import copy
 import random
 import numpy as np
 import logging
-import time
 from itertools import product
-from queue import PriorityQueue
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -106,7 +104,7 @@ class Variable:
         return True
 
     @property
-    def all_vals(self):
+    def domain(self):
         """
         :return: A list of all values in the domain.
         """
@@ -120,7 +118,7 @@ class Variable:
         return len(self._enum_domain) == 0
 
     @property
-    def reduced(self):
+    def assigned(self):
         """
         :return: True if there is a single value in the domain of the variable ensuring that the value has been
         assigned.
@@ -181,7 +179,7 @@ class Constraint:
         :return: An iter over tuple of values from relevant variables (generated through cartesian product)
         that satisfy the constraint.
         """
-        domains = [var.all_vals for var in self.vars]
+        domains = [var.domain for var in self.vars]
         value_iter = product(*domains)
         for values in value_iter:
             if self.constraint_function(*values, *self.args, **self.kwargs):
@@ -193,17 +191,25 @@ class Constraint:
         This function reduces the domain of all the variables that it is involved with. Any value in the domain of
         variables that doesn't satisfy the constraint for all possible combinations of the values from other variables
         is removed.
-        :return: List of list. Corresponding to each variable the list contains all the values from the domain that
+        :return: None if the constrain cannot be satisfied.
+        List of list. Corresponding to each variable the list contains all the values from the domain that
         have been removed.
         """
         all_possible_vals = list(self.satisfied_through())      # List of all entries (in form of list) from var1, var2,
-        # var3, ... that satisfies the constraint.
+                                                                # var3, ... that satisfies the constraint.
+        reduced_dom_of_vars = []
+        if len(all_possible_vals) == 0:
+            for var in self.vars:
+                reduced_dom_of_vars.append(var.domain)
+                var.assign_domain([])
+            return reduced_dom_of_vars
+
         list_of_possible_vals = list(map(list, zip(*all_possible_vals)))
         # [List of permissible values in var1, List of permissible values in var2, ...]
-        reduced_dom_of_vars = []
+
         for vals, var in zip(list_of_possible_vals, self.vars):     # For each var, find the set of unique vals in its
             # domain subject to the constraints and change the domain to the same.
-            reduced_dom_of_vars.append(list(set(var.all_vals).difference(set(vals))))
+            reduced_dom_of_vars.append(list(set(var.domain).difference(set(vals))))
             var.assign_domain(list(vals))       # The domain handling in variable takes care than the same element
             # is not repeated in the domain.
         return reduced_dom_of_vars
@@ -257,11 +263,16 @@ class CSP:
         self.n = n
         self.d = d
         self.t = t
+        self.CONSISTENT = None      # Set to true if Eqns and Constraints are consistent,
+                                    # false if not, and None if unknown
         domain = list(range(2**d))                                      # Domain for each variable
         self.all_vars = [Variable(d, domain) for _ in range(n)]         # List of all Variables by initializing.
+        self.all_vars[0].assign_value(0)
+        self.all_vars[1].assign_value(7)
+        self.all_vars[2].assign_value(7<<4)
         self.all_constraints = dict()                       # Dict to contain all the constraint equations.
-        self.constraint_eqn_for_var = [[] for i in range(len(self.all_vars))]           # Put the keys of constraint equations dict that
-        # are relevant for the variable on the same index.
+        self.constraint_eqn_for_var = [[] for _ in range(len(self.all_vars))]
+        # Put the keys of constraint equations dict that are relevant for the variable on the same index.
         self.construct_constraints()
 
     def print_status(self):
@@ -273,10 +284,10 @@ class CSP:
             return
         for var in self.all_vars:
             print("The variable " + str(var), end="")
-            if var.reduced:
-                print("is reduced to single value: " + str(var.all_vals[0]))
+            if var.assigned:
+                print("is assigned to single value: " + str(var.domain[0]))
             else:
-                print("has " + str(len(var)) + " values that are:" + str(var.all_vals))
+                print("has " + str(len(var)) + " values that are:" + str(var.domain))
         print()
         print("There are total of " + str(len(list(self.all_constraints.keys()))) + " consistency equations.")
 
@@ -293,14 +304,13 @@ class CSP:
                         self.constraint_eqn_for_var[idx1].append((idx1, idx2))
                     if (idx1, idx2) not in self.constraint_eqn_for_var[idx2]:
                         self.constraint_eqn_for_var[idx2].append((idx1, idx2))
-        self.all_constraints['point1'] = Constraint(Constraint.equal, 1, self.all_vars[0], tuple([0]*self.d))
-        self.constraint_eqn_for_var[0].append('point1')
-        self.all_constraints['point2'] = Constraint(Constraint.equal, 1, self.all_vars[1],
-                                                    tuple([0]*(self.d-self.t)+[1]*self.t))
-        self.constraint_eqn_for_var[1].append('point2')
-        # self.all_constraints['point3'] = Constraint(Constraint.equal, 1, self.all_vars[2],
-        #                                             tuple([1]*self.t+[0]*(self.d-self.t)))
-        # self.constraint_eqn_for_var[2].append('point3')
+
+    def ac_measure(self):
+        """
+        A function to measure how well has Arc Consistency algorithm worked.
+        :return: -(Sm of number of elements remaining in domain of variables).
+        """
+        return sum([len(var) for var in self.all_vars])
 
     def arc_consistency(self):
         """
@@ -312,19 +322,20 @@ class CSP:
         FACTOR = 0.8        # The decay factor for the priorities in each loop.
         PRIORITY_VAL = 1    # The added value for the priorities in each loop.
         all_constraints = list(self.all_constraints.keys())                # A list of all constraint to be checked.
-        constraints_priority = [PRIORITY_VAL*FACTOR]*(len(all_constraints)-2) + [PRIORITY_VAL]*2
+        constraints_priority = [PRIORITY_VAL]*2 + [PRIORITY_VAL*FACTOR]*(len(all_constraints)-2)
+        # Provide higher priority to equations that are expected to reduce the domain for sure.
         while any(constraints_priority):
             ITERATIONS += 1
-            logging.debug(ITERATIONS)
-            logging.debug(len([priority>0 for priority in constraints_priority]))
-            logging.debug([len(domain) for domain in self.all_vars])
+            # logging.debug(ITERATIONS)
+            # logging.debug(len([priority > 0 for priority in constraints_priority]))
+            # logging.debug([len(domain) for domain in self.all_vars])
             current_constraint_idx = constraints_priority.index(max(constraints_priority))
             current_constraint_key = all_constraints[current_constraint_idx]
             constraint = self.all_constraints[current_constraint_key]
             reduction = constraint.reduce_domain()      # Reduce a constraint.
-            logging.debug(current_constraint_key)
             constraints_priority[current_constraint_idx] = 0
             constraints_priority = [priority*FACTOR for priority in constraints_priority]
+            # logging.debug(current_constraint_key)
             for var, reduced_vals in zip(constraint.vars, reduction):
                 if len(reduced_vals) > 0:               # If any of the variables involved in this constraint is reduced
                     var_idx = self.all_vars.index(var)
@@ -334,7 +345,108 @@ class CSP:
                         constraints_priority[constraint_idx] += PRIORITY_VAL
                     pass
             pass
-            constraints_priority[current_constraint_idx] = 0
+            constraints_priority[current_constraint_idx] = 0    # Current constraint is already checked.
+            if any([len(var) == 0 for var in self.all_vars]):
+                self.CONSISTENT = False
+                return False
+        return self.ac_measure()
+
+    def variable_assignment(self, variable=None, value=None):
+        """
+        This function assigns the most appropriate value to the most appropriate variable pertaining to the
+        rules mentioned in the beginning of the code.
+        :rtype: (Variable, tuple, CSP)
+        :return: None
+        """
+        variables_to_check = []
+        if value is not None and variable is not None:
+            variable_idx = self.all_vars.index(variable)
+            assert value in variable.domain
+            copy_for_assignment = copy.deepcopy(self)
+            copy_for_assignment.all_vars[variable_idx].assign_value(value)
+            # If the value and variable are known then assign and return.
+            return variable, value, copy_for_assignment
+        if variable is not None:
+            if isinstance(variable, list):  # If only the variable/s is known and it is a list of variables then use
+                                            # that list
+                for var in variable:
+                    assert not var.assigned
+                variables_to_check = variable
+            else:
+                assert not variable.assigned
+                variables_to_check = [variable]     # Else put a single element in list to be checked.
+        else:
+            for var in self.all_vars:
+                if not var.assigned:
+                    variables_to_check.append(var)
+        if value is not None:       # If variable is not provided, then a single value ought to be provided.
+            # The algorithm finds all the variables in self that are not already assigned but have value in their domain
+            for var in self.all_vars:
+                if var.assigned or value not in var.domain:
+                    continue
+                else:
+                    variables_to_check.append(var)
+        if len(variables_to_check) < 1:
+            raise ValueError
+        # Find the best Variable to be assigned a value.
+        elements_in_domain = []
+        for var in variables_to_check:
+            elements_in_domain.append(len(var.domain))
+        min_elements_idx = elements_in_domain.index(min(elements_in_domain))
+        variable_to_assign = variables_to_check[min_elements_idx]
+        # Find the best value to be assigned.
+        # best_measure_so_far = float('-inf')
+        # best_step_so_far = None
+        # best_val_so_far = None
+        # for val in variable_to_assign.next_val():
+        #     _, _, copy_for_ac = self.variable_assignment(variable_to_assign, val)
+        #     ac_measure = copy_for_ac.arc_consistency()
+        #     if ac_measure > best_measure_so_far:
+        #         best_measure_so_far = ac_measure
+        #         best_step_so_far = copy_for_ac
+        #         best_val_so_far = val
+        best_val_so_far = random.choice(variable_to_assign.domain)
+        _, _, best_step_so_far = self.variable_assignment(variable_to_assign, best_val_so_far)
+        return variable_to_assign, best_val_so_far, best_step_so_far
+
+    def search(self, tree_so_far = None):
+        """
+        A search algorithm on the CSP problem posed.
+        :return: self with values assigned and CONSISTENT flag set to True if the problem is solved,
+        else with CONSISTENT flag set to False.
+        """
+        copy_for_search = copy.deepcopy(self)
+        ITERATION = 0
+        while self.CONSISTENT is None:
+            ITERATION += 1
+            try:
+                best_var, best_val, resulting_CSP = copy_for_search.variable_assignment()
+            except ValueError:  # If no more value remains to be checked.
+                if copy_for_search.arc_consistency() is not False:   # If we are consistent on existing values.
+                    self.all_vars = copy_for_search.all_vars
+                    self.CONSISTENT = True
+                    return
+                else:
+                    self.CONSISTENT = False
+                    return
+            # temporarily added when ARC Consistency is not checked in variable assignment.
+            if resulting_CSP.arc_consistency() is False:
+                self.CONSISTENT = False
+                return
+            if tree_so_far is None:
+                tree_so_far = []
+            tree_so_far.append(ITERATION)
+            print(tree_so_far)
+            resulting_CSP.search(tree_so_far)
+            tree_so_far.pop()
+            if resulting_CSP.CONSISTENT:
+                self.all_vars = resulting_CSP.all_vars
+                self.CONSISTENT = True
+                return
+            else:       # resulting must be False
+                if not best_var.remove_from_domain(best_val):   # All values from the domain is exhausted.
+                    self.CONSISTENT = False
+                    return
 
 
 def main():
@@ -356,7 +468,8 @@ def main():
     # print(list(csp1.all_constraints['point1'].satisfied_through()))
     # csp1.all_constraints['point2'].reduce_domain()
     # csp1.print_status()
-    csp1.arc_consistency()
+    # csp1.arc_consistency()
+    csp1.search()
     csp1.print_status()
     pass
 
