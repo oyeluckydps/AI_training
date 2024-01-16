@@ -263,26 +263,44 @@ class CSP:
         self.n = n
         self.d = d
         self.t = t
-        self.CONSISTENT = None      # Set to true if Eqns and Constraints are consistent,
-                                    # false if not, and None if unknown
         domain = list(range(2**d))                                      # Domain for each variable
         self.all_vars = [Variable(d, domain) for _ in range(n)]         # List of all Variables by initializing.
         self.all_vars[0].assign_value(0)
         self.all_vars[1].assign_value(7)
         self.all_vars[2].assign_value(7<<4)
+        self.ASSIGNED           # Set to true if the CSP has been resolved. It may be consistent or inconsistent.
+        self.CONSISTENT         # Set to true if it is consistent, False if not, and None if not assigned.
         self.all_constraints = dict()                       # Dict to contain all the constraint equations.
         self.constraint_eqn_for_var = [[] for _ in range(len(self.all_vars))]
         # Put the keys of constraint equations dict that are relevant for the variable on the same index.
         self.construct_constraints()
 
+    @property
+    def ASSIGNED(self):
+        if any([len(var) == 0 for var in self.all_vars]) or all([len(var) == 1 for var in self.all_vars]):
+            return True
+        else:
+            return False
+
+    @property
+    def CONSISTENT(self):
+        if not self.ASSIGNED:
+            return None
+        if any([len(var) == 0 for var in self.all_vars]):
+            return False
+        else:
+            return True
+
     def print_status(self):
         print("Printing the status of the CSP")
         inconsistencies = [var.inconsistent for var in self.all_vars]
-        if any([var.inconsistent for var in self.all_vars]):
+        if self.CONSISTENT is False:
             print("The CSP leads to INCONSISTENCY!")
             print(inconsistencies)
             return
         for var in self.all_vars:
+            if self.CONSISTENT is True:
+                print("The CSP is CONSISTENT!")
             print("The variable " + str(var), end="")
             if var.assigned:
                 print("is assigned to single value: " + str(var.domain[0]))
@@ -318,11 +336,13 @@ class CSP:
         consistent i.e. not removable.
         :return: True if arc consistency is maintained. False if domain of a variable is reduced to [].
         """
+        if self.ASSIGNED is True:
+            return None
         ITERATIONS = 0
         FACTOR = 0.8        # The decay factor for the priorities in each loop.
         PRIORITY_VAL = 1    # The added value for the priorities in each loop.
         all_constraints = list(self.all_constraints.keys())                # A list of all constraint to be checked.
-        constraints_priority = [PRIORITY_VAL]*2 + [PRIORITY_VAL*FACTOR]*(len(all_constraints)-2)
+        constraints_priority = [PRIORITY_VAL*FACTOR]*(len(all_constraints))
         # Provide higher priority to equations that are expected to reduce the domain for sure.
         while any(constraints_priority):
             ITERATIONS += 1
@@ -346,68 +366,81 @@ class CSP:
                     pass
             pass
             constraints_priority[current_constraint_idx] = 0    # Current constraint is already checked.
-            if any([len(var) == 0 for var in self.all_vars]):
-                self.CONSISTENT = False
-                return False
+            if self.ASSIGNED is True:
+                return None
         return self.ac_measure()
 
-    def variable_assignment(self, variable=None, value=None):
+    def find_best_variable(self, variable=None):
         """
-        This function assigns the most appropriate value to the most appropriate variable pertaining to the
-        rules mentioned in the beginning of the code.
-        :rtype: (Variable, tuple, CSP)
-        :return: None
+        Find the best variable over which to iterate.
+        :param variable: a list of variables from which the best variable has to be found.
+        :return:
         """
+        if self.ASSIGNED is True:
+            return None
         variables_to_check = []
-        if value is not None and variable is not None:
-            variable_idx = self.all_vars.index(variable)
-            assert value in variable.domain
-            copy_for_assignment = copy.deepcopy(self)
-            copy_for_assignment.all_vars[variable_idx].assign_value(value)
-            # If the value and variable are known then assign and return.
-            return variable, value, copy_for_assignment
         if variable is not None:
-            if isinstance(variable, list):  # If only the variable/s is known and it is a list of variables then use
-                                            # that list
-                for var in variable:
-                    assert not var.assigned
-                variables_to_check = variable
-            else:
-                assert not variable.assigned
-                variables_to_check = [variable]     # Else put a single element in list to be checked.
+            for var in variable:
+                if not var.assigned:
+                    variables_to_check.append(var)
         else:
             for var in self.all_vars:
                 if not var.assigned:
                     variables_to_check.append(var)
-        if value is not None:       # If variable is not provided, then a single value ought to be provided.
-            # The algorithm finds all the variables in self that are not already assigned but have value in their domain
-            for var in self.all_vars:
-                if var.assigned or value not in var.domain:
-                    continue
-                else:
-                    variables_to_check.append(var)
         if len(variables_to_check) < 1:
-            raise ValueError
-        # Find the best Variable to be assigned a value.
+            return None
         elements_in_domain = []
         for var in variables_to_check:
             elements_in_domain.append(len(var.domain))
         min_elements_idx = elements_in_domain.index(min(elements_in_domain))
-        variable_to_assign = variables_to_check[min_elements_idx]
-        # Find the best value to be assigned.
-        # best_measure_so_far = float('-inf')
-        # best_step_so_far = None
-        # best_val_so_far = None
-        # for val in variable_to_assign.next_val():
-        #     _, _, copy_for_ac = self.variable_assignment(variable_to_assign, val)
-        #     ac_measure = copy_for_ac.arc_consistency()
-        #     if ac_measure > best_measure_so_far:
-        #         best_measure_so_far = ac_measure
-        #         best_step_so_far = copy_for_ac
-        #         best_val_so_far = val
-        best_val_so_far = random.choice(variable_to_assign.domain)
-        _, _, best_step_so_far = self.variable_assignment(variable_to_assign, best_val_so_far)
-        return variable_to_assign, best_val_so_far, best_step_so_far
+        return variables_to_check[min_elements_idx]
+
+    def find_best_value(self, variable=None):
+        """
+        Find the best value from the domain of a domain if domain is provided. If variable is not provided
+        then search for the best variable first.
+        Currently supporting the best value finding based on the arc_consistency result and random value assignment.
+        :param variable:
+        :return:
+        """
+        IMPLEMENTATION = 'RANDOM'        # ARC_CONSISTENCY or RANDOM
+        if variable is None:
+            variable = self.find_best_variable()
+            if variable is None:
+                return None, None, None
+
+        if IMPLEMENTATION == 'ARC_CONSISTENCY':
+            best_measure_so_far = float('-inf')
+            best_step_so_far = None
+            best_val_so_far = None
+            for val in variable.next_val():
+                copy_for_ac = self.variable_assignment(variable, val)
+                ac_measure = copy_for_ac.arc_consistency()
+                if ac_measure > best_measure_so_far:
+                    best_measure_so_far = ac_measure
+                    best_step_so_far = copy_for_ac
+                    best_val_so_far = val
+            return variable, best_val_so_far, best_step_so_far
+
+        if IMPLEMENTATION == 'RANDOM':
+            random_value = random.choice(variable.domain)
+            copy_post_assignment = self.variable_assignment(variable, random_value)
+            return variable, random_value, copy_post_assignment
+
+    def variable_assignment(self, variable, value):
+        """
+        This function assigns the provided value to the variable if the value is in domain. It doesn't return the self
+        but a copy to which the assignment has taken place.
+        :rtype: (Variable, tuple, CSP)
+        :return: None
+        """
+        variable_idx = self.all_vars.index(variable)
+        assert value in variable.domain
+        copy_for_assignment = copy.deepcopy(self)
+        copy_for_assignment.all_vars[variable_idx].assign_value(value)
+        # If the value and variable are known then assign and return.
+        return copy_for_assignment
+
 
     def search(self, tree_so_far = None):
         """
@@ -415,38 +448,31 @@ class CSP:
         :return: self with values assigned and CONSISTENT flag set to True if the problem is solved,
         else with CONSISTENT flag set to False.
         """
-        copy_for_search = copy.deepcopy(self)
+        self.arc_consistency()      # Check the arc consistency
+        if self.ASSIGNED:           # If the variables are assigned, be it consistent or inconsistent, then return.
+            return
+        best_var = self.find_best_variable()        # If values are not assigned then it is always possible to find a
+                                                    # best variable for this level.
         ITERATION = 0
-        while self.CONSISTENT is None:
+        while len(best_var) > 0:
             ITERATION += 1
-            try:
-                best_var, best_val, resulting_CSP = copy_for_search.variable_assignment()
-            except ValueError:  # If no more value remains to be checked.
-                if copy_for_search.arc_consistency() is not False:   # If we are consistent on existing values.
-                    self.all_vars = copy_for_search.all_vars
-                    self.CONSISTENT = True
-                    return
-                else:
-                    self.CONSISTENT = False
-                    return
-            # temporarily added when ARC Consistency is not checked in variable assignment.
-            if resulting_CSP.arc_consistency() is False:
-                self.CONSISTENT = False
-                return
+            _, best_val, resulting_CSP = self.find_best_value(variable=best_var)
+            # Best value and the resulting CSP (another copy) in which the best variable (over which we are
+            # iterating) is assigned the best value from its domain found by the algorithm.
             if tree_so_far is None:
                 tree_so_far = []
             tree_so_far.append(ITERATION)
             print(tree_so_far)
-            resulting_CSP.search(tree_so_far)
+            resulting_CSP.search(tree_so_far)   # Call search on this new copy of self with best variable and value
+                                                # assigned.
             tree_so_far.pop()
-            if resulting_CSP.CONSISTENT:
+            if resulting_CSP.CONSISTENT:        # CONSISTENT would either be True or False now.
                 self.all_vars = resulting_CSP.all_vars
-                self.CONSISTENT = True
                 return
             else:       # resulting must be False
-                if not best_var.remove_from_domain(best_val):   # All values from the domain is exhausted.
-                    self.CONSISTENT = False
-                    return
+                best_var.remove_from_domain(best_val)       # If this value was not able to find a CONSISTENT solution
+                                                            # Then remove it from the domain.
+        return      # If the domain of the variable has been reduced to [].
 
 
 def main():
